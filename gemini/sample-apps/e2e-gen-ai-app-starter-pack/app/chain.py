@@ -11,133 +11,65 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# mypy: disable-error-code="arg-type,attr-defined"
-# pylint: disable=W0613, W0622
+# mypy: disable-error-code="unused-ignore, union-attr"
 
-import logging
-from typing import Any, AsyncIterator, Dict, List
+from typing import Dict
 
-from app.patterns.custom_rag_qa.templates import (
-    inspect_conversation_template,
-    rag_template,
-    template_docs,
-)
-from app.patterns.custom_rag_qa.vector_store import get_vector_store
-from app.utils.decorators import custom_chain
-from app.utils.output_types import OnChatModelStreamEvent, OnToolEndEvent
-import google
-from langchain.schema import Document
-from langchain.tools import tool
-from langchain_core.messages import ToolMessage
-from langchain_google_community.vertex_rank import VertexAIRank
-from langchain_google_vertexai import ChatVertexAI, VertexAIEmbeddings
-import vertexai
+from langchain_core.messages import BaseMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
+from langchain_google_vertexai import ChatVertexAI
+from langgraph.graph import END, MessagesState, StateGraph
+from langgraph.prebuilt import ToolNode
 
-# Configuration
 LOCATION = "us-central1"
-EMBEDDING_MODEL = "text-embedding-004"
-LLM = "gemini-1.5-flash-002"
-TOP_K = 5
-
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
-
-# Initialize Google Cloud and Vertex AI
-credentials, project_id = google.auth.default()
-vertexai.init(project=project_id, location=LOCATION)
-
-# Set up embedding model and vector store
-embedding = VertexAIEmbeddings(model_name=EMBEDDING_MODEL)
-vector_store = get_vector_store(embedding=embedding)
-retriever = vector_store.as_retriever(search_kwargs={"k": 20})
-
-# Initialize document compressor
-compressor = VertexAIRank(
-    project_id=project_id,
-    location_id="global",
-    ranking_config="default_ranking_config",
-    title_field="id",
-    top_n=TOP_K,
-)
+LLM = "gemini-1.5-pro-002"
 
 
+# 1. Define tools
 @tool
-def retrieve_docs(query: str) -> List[Document]:
-    """
-    Useful for retrieving relevant documents based on a query.
-    Use this when you need additional information to answer a question.
-
-    Args:
-        query (str): The user's question or search query.
-
-    Returns:
-        List[Document]: A list of the top-ranked Document objects, limited to TOP_K (5) results.
-    """
-    retrieved_docs = retriever.invoke(query)
-    ranked_docs = compressor.compress_documents(documents=retrieved_docs, query=query)
-    return ranked_docs
+def search(query: str) -> str:
+    """Simulates a web search. Use it get information on weather"""
+    if "sf" in query.lower() or "san francisco" in query.lower():
+        return "It's 60 degrees and foggy."
+    return "It's 90 degrees and sunny."
 
 
-@tool
-def should_continue() -> None:
-    """
-    Use this tool if you determine that you have enough context to respond to the questions of the user.
-    """
-    return None
+tools = [search]
+
+# 2. Set up the language model
+llm = ChatVertexAI(
+    model=LLM, location=LOCATION, temperature=0, max_tokens=1024, streaming=True
+).bind_tools(tools)
 
 
-# Initialize language model
-llm = ChatVertexAI(model=LLM, temperature=0, max_tokens=1024)
-
-# Set up conversation inspector
-inspect_conversation = inspect_conversation_template | llm.bind_tools(
-    [retrieve_docs, should_continue], tool_choice="any"
-)
-
-# Set up response chain
-response_chain = rag_template | llm
+# 3. Define workflow components
+def should_continue(state: MessagesState) -> str:
+    """Determines whether to use tools or end the conversation."""
+    last_message = state["messages"][-1]
+    return "tools" if last_message.tool_calls else END
 
 
-@custom_chain
-async def chain(
-    input: Dict[str, Any], **kwargs: Any
-) -> AsyncIterator[OnToolEndEvent | OnChatModelStreamEvent]:
-    """
-    Implement a RAG QA chain with tool calls.
+def call_model(state: MessagesState, config: RunnableConfig) -> Dict[str, BaseMessage]:
+    """Calls the language model and returns the response."""
+    system_message = "You are a helpful AI assistant."
+    messages_with_system = [{"type": "system", "content": system_message}] + state[
+        "messages"
+    ]
+    # Forward the RunnableConfig object to ensure the agent is capable of streaming the response.
+    response = llm.invoke(messages_with_system, config)
+    return {"messages": response}
 
-    This function is decorated with `custom_chain` to offer LangChain compatible
-    astream_events, support for synchronous invocation through the `invoke` method,
-    and OpenTelemetry tracing.
-    """
-    # Inspect conversation and determine next action
-    inspection_result = inspect_conversation.invoke(input)
-    tool_call_result = inspection_result.tool_calls[0]
 
-    # Execute the appropriate tool based on the inspection result
-    if tool_call_result["name"] == "retrieve_docs":
-        # Retrieve relevant documents
-        docs = retrieve_docs.invoke(tool_call_result["args"])
-        # Format the retrieved documents
-        formatted_docs = template_docs.format(docs=docs)
-        # Create a ToolMessage with the formatted documents
-        tool_message = ToolMessage(
-            tool_call_id=tool_call_result["name"],
-            name=tool_call_result["name"],
-            content=formatted_docs,
-            artifact=docs,
-        )
-    else:
-        # If no documents need to be retrieved, continue with the conversation
-        tool_message = should_continue.invoke(tool_call_result)
+# 4. Create the workflow graph
+workflow = StateGraph(MessagesState)
+workflow.add_node("agent", call_model)
+workflow.add_node("tools", ToolNode(tools))
+workflow.set_entry_point("agent")
 
-    # Update input messages with new information
-    input["messages"] = input["messages"] + [inspection_result, tool_message]
+# 5. Define graph edges
+workflow.add_conditional_edges("agent", should_continue)
+workflow.add_edge("tools", "agent")
 
-    # Yield tool results metadata
-    yield OnToolEndEvent(
-        data={"input": tool_call_result["args"], "output": tool_message}
-    )
-
-    # Stream LLM response
-    async for chunk in response_chain.astream(input=input):
-        yield OnChatModelStreamEvent(data={"chunk": chunk})
+# 6. Compile the workflow
+chain = workflow.compile()
