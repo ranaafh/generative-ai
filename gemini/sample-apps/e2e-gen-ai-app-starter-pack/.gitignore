@@ -186,6 +186,8 @@ Thumbs.db
 *.vscode*
 
 .persist_vector_store
+.persist_vector_store_pdf
+.persist_vector_store_confluence
 tests/load_test/.results/*.html
 tests/load_test/.results/*.csv
 locust_env
