@@ -49,7 +49,7 @@ vertexai.init(project=project_id, location=LOCATION)
 # Set up embedding model and vector store
 embedding = VertexAIEmbeddings(model_name=EMBEDDING_MODEL)
 vector_store = get_vector_store(embedding=embedding)
-retriever = vector_store.as_retriever(search_kwargs={"k": 20})
+retriever = vector_store.as_retriever(search_kwargs={"k": 10})
 
 # Initialize document compressor
 compressor = VertexAIRank(
