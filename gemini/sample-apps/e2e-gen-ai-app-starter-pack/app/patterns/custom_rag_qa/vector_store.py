@@ -25,7 +25,7 @@ from langchain_community.vectorstores import SKLearnVectorStore
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
-PERSIST_PATH = ".persist_vector_store"
+PERSIST_PATH = ".persist_vector_store_confluence"
 load_dotenv()
 DOMAIN = os.getenv("CONFLUENCE_DOMAIN")
 EMAIL = os.getenv("CONFLUENCE_EMAIL")
