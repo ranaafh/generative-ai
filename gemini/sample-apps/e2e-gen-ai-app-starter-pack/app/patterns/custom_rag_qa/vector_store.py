@@ -22,7 +22,7 @@ from langchain_community.vectorstores import SKLearnVectorStore
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
-PERSIST_PATH = ".persist_vector_store"
+PERSIST_PATH = ".persist_vector_store_pdf"
 URL = "https://services.google.com/fh/files/misc/practitioners_guide_to_mlops_whitepaper.pdf"
 
 
