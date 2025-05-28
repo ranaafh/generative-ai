@@ -19,7 +19,7 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_google_vertexai import ChatVertexAI
 
-llm = ChatVertexAI(model_name="gemini-1.5-flash-001", temperature=0)
+llm = ChatVertexAI(model_name="gemini-1.5-flash-002", temperature=0)
 
 title_template = ChatPromptTemplate.from_messages(
     [("system", """Given a list of messages between a human and AI, come up with a short and relevant title for the conversation. Use up to 10 words. The title needs to be concise.
